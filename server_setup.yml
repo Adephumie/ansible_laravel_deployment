@@ -1,0 +1,160 @@
+---
+- hosts: all
+  become: true 
+  gather_facts: False
+  
+  vars:
+    created_username: funmilayo
+
+  pre_tasks:
+
+  - name: Install aptitude
+    tags: always
+    apt:
+        name: aptitude
+        state: latest
+        update_cache: true
+
+  - name: Upgrade repository
+    tags: always
+    apt:
+      upgrade: dist
+
+- hosts: all
+  become: true
+  gather_facts: False
+  tasks: 
+
+  - name: Setup passwordless sudo for admin group
+    tags: user
+    lineinfile:
+      path: /etc/sudoers
+      state: present
+      regexp: '^%admin'
+      line: '%admin ALL=(ALL) NOPASSWD: ALL'
+      validate: '/usr/sbin/visudo -cf %s'
+
+  - name: Create an ansible user to connect to the control node
+    tags: user
+    user:
+      name: "{{ created_username }}"
+      state: present
+      groups: admin
+      append: yes
+      create_home: true
+      shell: /bin/bash
+  
+  - name: Add ssh key for ansible user
+    tags: user
+    authorized_key:
+      user: "{{ created_username }}"
+      state: present
+      key: "{{ lookup('file', '/home/vagrant/.ssh/ansible.pub') }}"
+
+  - name: Disable password authentication for root
+    tags: user
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      state: present
+      regexp: '^#?PermitRootLogin'
+      line: 'PermitRootLogin prohibit-password'
+
+  - name: Add ssh key for remote connection
+    tags: user
+    authorized_key:
+      user: funmilayo
+      state: present
+      key: "{{ lookup('file', '/home/vagrant/.ssh/id_ed25519.pub') }}"
+
+- hosts: all
+  become: yes
+  tasks:
+
+  - name: Update apt and install required system packages
+    tags: setup
+    apt:
+      pkg:
+        - curl
+        - git
+        - ufw
+        - wget
+      state: latest
+      update_cache: true
+
+  - name: Allow SSH connection on the server
+    tags: setup
+    ufw:
+      rule: allow
+      name: OpenSSH
+
+  - name: Enable and deny by default
+    tags: setup
+    ufw:
+      state: enabled
+      default: deny
+  
+  - name: Allow all access to tcp port 80
+    tags: setup
+    ufw:
+      rule: allow
+      port: '80'
+      proto: tcp
+
+  - name: Allow all access to https
+    tags: setup
+    ufw:
+      rule: allow
+      port: '443'
+      proto: tcp
+
+  - name: Set timezone on server
+    tags: setup
+    timezone:
+      name: Africa/Lagos
+
+- hosts: all
+  become: true
+  tasks:
+
+  - name: Installing Apache and PHP packages and dependencies
+    tags: apache,php
+    apt:
+       name: "{{ item }}" 
+       update_cache: yes 
+       state: latest
+    loop:
+      - apache2
+      - apt-transport-https
+      - gnupg2
+      - ca-certificates
+      - software-properties-common
+ 
+  - name: add a ppa:ondrej/php repository to APT
+    tags: apache,php
+    apt_repository:
+      validate_certs: no
+      repo: 'ppa:ondrej/php'
+      state: present
+      update_cache: yes
+
+  - name: install php
+    tags: apache,php
+    apt:
+      name: "{{ item }}"
+      update_cache: yes
+      state: latest
+    loop:
+      - php
+      - php-mysql
+      - libapache2-mod-php
+      - python3-pymysql
+      - php-common
+      - php-xml 
+      - php-gd
+      - php-tokenizer
+      - php-mbstring
+      - php-json
+      - php-zip
+      - unzip
+      - php-bcmath
+
