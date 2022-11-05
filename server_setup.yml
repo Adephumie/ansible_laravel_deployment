@@ -1,11 +1,9 @@
 ---
+# Play to update repository
 - hosts: all
   become: true 
   gather_facts: False
   
-  vars:
-    created_username: funmilayo
-
   pre_tasks:
 
   - name: Install aptitude
@@ -20,9 +18,12 @@
     apt:
       upgrade: dist
 
+# Play to create user and the connection credentials 
 - hosts: all
   become: true
   gather_facts: False
+  vars_files:
+     - vars/default.yml
   tasks: 
 
   - name: Setup passwordless sudo for admin group
@@ -62,12 +63,15 @@
   - name: Add ssh key for remote connection
     tags: user
     authorized_key:
-      user: funmilayo
+      user: "{{ created_username }}"
       state: present
       key: "{{ lookup('file', '/home/vagrant/.ssh/id_ed25519.pub') }}"
 
+# Play to install required system packages like git, ufw, and set timezone
 - hosts: all
   become: yes
+  vars_files:
+     - vars/default.yml 
   tasks:
 
   - name: Update apt and install required system packages
@@ -97,21 +101,22 @@
     tags: setup
     ufw:
       rule: allow
-      port: '80'
+      port: "{{ http_port }}"
       proto: tcp
 
   - name: Allow all access to https
     tags: setup
     ufw:
       rule: allow
-      port: '443'
+      port: "{{ https_port }}"
       proto: tcp
 
   - name: Set timezone on server
     tags: setup
     timezone:
-      name: Africa/Lagos
+      name: "{{ timezone }}"
 
+# Play to Install apache and php packages
 - hosts: all
   become: true
   tasks:
@@ -158,3 +163,196 @@
       - unzip
       - php-bcmath
 
+# Play to edit the php.ini file
+- hosts: all
+  become: yes
+  gather_facts: False
+  tasks:
+
+  - name: ensure cgi.fix_pathinfo is set to 0
+    tags: config
+    lineinfile:
+      dest: /etc/php/8.1/apache2/php.ini
+      regexp: '^(.*)cgi.fix_pathinfo=' 
+      line: cgi.fix_pathinfo=0
+    notify: Reload Apache
+
+  handlers:
+    - name: Reload Apache
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
+
+
+# Play to install and Secure MySQL server and create database and user
+- name: Install MySQL server, Secure it, and create user and db
+  hosts: all
+  become: true
+  vars_files:
+     - vars/default.yml
+  tasks:
+
+  - name: Install MySQL and Dependencies
+    tags: mysql
+    apt:
+      name: "{{ item }}"
+      state: latest
+      update_cache: yes
+    loop:
+      - mysql-server
+      - mysql-client
+      - python3-mysqldb
+      - libmysqlclient-dev
+    become: yes
+
+  - name: start and enable mysql service
+    tags: mysql
+    service:
+      name: mysql
+      state: started
+      enabled: yes
+
+  - name: Copy .my.cnf file with root password credentials
+    no_log: true
+    tags: mysql
+    template:
+      src: "files/client.my.cnf.j2"
+      dest: "/root/.my.cnf"
+      owner: root
+      group: root
+      mode: 0600
+    register: mycnf_is_installed
+    failed_when: false
+
+  - name: secure mysql installation
+    tags: mysql
+    become: yes
+    expect:
+      command: mysql_secure_installation
+      responses:
+        'Enter current password for root': ''
+        'Set root password': 'n'
+        'Remove anonymous users': 'y'
+        'Disallow root login remotely': 'y'
+        'Remove test database': 'y'
+        'Reload privilege tables now': 'y'
+      timeout: 5
+    register: secure_mysql
+    failed_when: "'... Failed!' in secure_mysql.stdout_lines"
+
+  - name: Create a new database for the project
+    tags: mysql
+    mysql_db:
+      name: "{{ db_name }}"
+      state: present
+      login_unix_socket: /run/mysqld/mysqld.sock
+    when: mycnf_is_installed is succeeded
+    failed_when: false
+    no_log: true
+
+  - name: Create database user with all database privileges
+    tags: mysql
+    mysql_user:
+      name: "{{ db_user }}"
+      password: "{{ db_password }}"
+      priv: '*.*:ALL'
+      state: present
+    when: mycnf_is_installed is succeeded
+    failed_when: false
+    no_log: true
+
+  - name: Remove /root/.my.cnf
+    tags: mysql
+    file:
+      path: /root/.my.cnf
+      state: absent
+
+# Play to install composer
+- name: Install composer
+  hosts: all
+  become: true
+  tasks:
+
+  - name: Download composer file with check (sha256)
+    tags: composer
+    get_url:
+      url: https://getcomposer.org/download/latest-stable/composer.phar
+      dest: /usr/local/bin/composer.phar
+      checksum:
+        sha256:c252c2a2219956f88089ffc242b42c8cb9300a368fd3890d63940e4fc9652345 
+ 
+  - name: rename composer.phar to composer
+    tags: composer
+    shell: mv /usr/local/bin/composer.phar /usr/local/bin/composer
+    args:
+      creates: /usr/local/bin/composer
+
+  - name: make composer executable
+    tags: composer
+    file: 
+      path: /usr/local/bin/composer
+      mode: a+x
+      state: file
+
+# Play to create /var/www/ directory and cloning the laravel project
+- name: Create /var/www/ directory, clone project, and create with composer
+  become: true
+  hosts: all
+  vars_files:
+     - vars/default.yml
+  tasks:
+
+#  - name: checking if laravel app exists in directory
+ #   tags: git,laravel
+#    stat:
+#      path: /opt/{{ vhost_name }}
+#    register: folder_exists
+#    ignore_errors: yes
+
+  - name: download latest code from github to /opt directory
+    tags: git,laravel
+    git: 
+      repo: https://github.com/f1amy/laravel-realworld-example-app.git
+      dest: /opt/{{ vhost_name }}
+      force: yes
+      accept_hostkey: yes   
+
+#  - name: show message if project exists
+#    tags: git,laravel
+#    debug:
+#      msg: The app already exists.
+#    when: folder_exists is succeeded
+
+#  - name: check if project directory already exists
+#    tags: git,laravel
+#    command: ls /opt/{{ vhost_name }}
+ #   register: directory_exists
+#    ignore_errors: yes    
+
+  - name: move lavarel project from /opt to /var
+    tags: git,laravel
+    shell: mv /opt/{{ vhost_name }} /var/www/html/
+    become: true
+    
+  - name: Change project ownership
+    tags: git,laravel
+    file: 
+      path: /var/www/html/{{ vhost_name }}
+      state: directory
+      recurse: yes
+      owner: www-data
+      group: www-data
+    become: true
+
+  - name: Change permission
+    tags: git,laravel
+    file:
+      path: /var/www/html/{{ vhost_name }}/storage
+      mode: u=rwX,g=rX,o=rX
+      recurse: yes 
+    become: true
