@@ -1,16 +1,20 @@
 ---
+# MySQL DB setup
 mysql_root_password: "root"
 db_user: "miniproject"
 db_password: "miniproject"
 db_name: "miniproject"
+db_port: "3306"
 
-#app_user: "funmilayo"
+
+# Server and virtual host credentials
 vhost_name: lavarel
-http_host: "64.227.35.94"
-#http_conf: "your_domain.conf"
+http_host: "funmilayofagoyinbo.com"
+http_conf: "laravel.conf"
 created_username: "funmilayo"
 http_port: "80"
 https_port: "443"
 timezone: "Africa/Lagos"
-#disable_default: true
+
+
 
