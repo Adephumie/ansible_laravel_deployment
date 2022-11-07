@@ -288,7 +288,7 @@
 
 
 # Play to install composer
-- name: Install composer
+- name: Install composer package
   hosts: all
   become: true
   tasks:
@@ -323,7 +323,13 @@
     - vars/default.yml
   tasks:
 
-  - name: Setting up the app root directory for git
+  - name: Check if app directory already exists
+    tags: git
+    stat:
+      path: "/var/www/html/{{ vhost_name }}"
+    register: app_present
+
+  - name: Setting app root directory and ownership for git cloning
     tags: git
     file:
       path: "/var/www/html/"
@@ -331,6 +337,7 @@
       owner: "{{ created_username }}"
       mode: u=rwX,g=rX,o=rX
     become: true
+    when: not app_present.stat.exists
 
   - name: download latest code from github to app directory
     tags: git
@@ -339,12 +346,14 @@
       dest: "/var/www/html/{{ vhost_name }}"
       force: yes
       accept_hostkey: yes
+    when: not app_present.stat.exists
 
   - name: set up the .env file for laravel project
     tags: git
     template:
       src: "files/env.j2"
       dest: /var/www/html/{{ vhost_name }}/.env
+    when: not app_present.stat.exists
 
   - name: Set the permission and ownership for project
     tags: git
@@ -355,6 +364,7 @@
       owner: "{{ created_username }}"
       group: www-data
     become: true
+    when: not app_present.stat.exists
 
   - name: Change permission for app directory recursively
     tags: git
@@ -363,6 +373,7 @@
       mode: u=rwX,g=rX,o=rX
       recurse: yes
     become: true
+    when: not app_present.stat.exists
 
   - name: Change permission for app directory storage recursively
     tags: git
@@ -371,6 +382,7 @@
       mode: u=rwX,g=rX,o=rX
       recurse: yes
     become: true
+    when: not app_present.stat.exists
 
   - name: Change permission for app's bootstrap/cache directory recursively
     tags: git
@@ -379,6 +391,7 @@
       mode: u=rwX,g=rX,o=rX
       recurse: yes
     become: true
+    when: not app_present.stat.exists
 
 
 # Play to install laravel with composer and setup virtual host
@@ -396,7 +409,7 @@
     become_user: "{{ created_username }}"
     args:
       chdir: /var/www/html/{{ vhost_name }}
- 
+    when: not app_present.stat.exists 
 
 #migrating and seeding the database created. 
   - name: Run artisan migrate for the database
@@ -404,13 +417,7 @@
     shell: php /var/www/html/{{ vhost_name }}/artisan migrate --seed
     become_user: "{{ created_username }}"
     become: yes 
-#  - name: Generate app key
-#    tags: laravel
-#    command: php /var/www/html/{{ vhost_name }}/artisan key:generate
-
-#  - name: Set up app storage link
-#    tags: laravel
-#    command: php /var/www/html/{{ vhost_name }}/artisan storage:link
+    when: not app_present.stat.exists
 
   - name: set ownership of app to www-data:www-data
     tags: laravel
@@ -421,6 +428,7 @@
       owner: www-data
       group: www-data
     become: true
+    when: not app_present.stat.exists
 
   - name: Change app directory permission
     tags: laravel
@@ -429,7 +437,7 @@
       mode: u=rwX,g=rX,o=rX
       recurse: yes
     become: true
-      
+    when: not app_present.stat.exists      
 
 # Play to set Apache's config file and virtual hosting of app
 - name: Setting Apache's config file
@@ -445,21 +453,25 @@
       src: "files/apache.conf.j2"
       dest: /etc/apache2/sites-available/{{ http_conf }}
     become: true
+    when: app_present.stat.exists
     notify: reload apache 
 
   - name: enable apache virtualhost
     tags: virtualhost
     shell: /usr/sbin/a2ensite {{ http_conf }}
+    when: app_present.stat.exists
     notify: reload apache
 
   - name: disable apache default site
     tags: virtualhost
     shell: /usr/sbin/a2dissite 000-default.conf
+    when: app_present.stat.exists
     notify: reload apache
    
   - name: rewrite apache module
     tags: virtualhost
     shell: /usr/sbin/a2enmod rewrite
+    when: app_present.stat.exists
     become: true
     notify: reload apache
 
