@@ -21,7 +21,6 @@
       upgrade: dist
 
 
-
 # Play to create user and the connection credentials 
 - hosts: all
   become: true
@@ -70,7 +69,6 @@
       user: "{{ created_username }}"
       state: present
       key: "{{ lookup('file', '/home/vagrant/.ssh/id_ed25519.pub') }}"
-
 
 
 # Play to install required system packages like git, ufw, and set timezone
@@ -123,8 +121,6 @@
       name: "{{ timezone }}"
 
 
-
-
 # Play to Install apache and php packages
 - hosts: all
   become: true
@@ -171,7 +167,11 @@
       - php-zip
       - unzip
       - php-bcmath
-
+      - php-curl
+      - php-intl
+      - php-soap
+      - php-xdebug
+      - php-imagick
 
 #Certbot for TLS/SSL  
   - name: Install certbot for TLS/SSL
@@ -201,13 +201,6 @@
       service:
         name: apache2
         state: reloaded
-
-    - name: Restart Apache
-      service:
-        name: apache2
-        state: restarted
-
-
 
 
 # Play to install and Secure MySQL server and create database and user
@@ -287,6 +280,11 @@
     failed_when: false
     no_log: true
 
+  - name: Remove /root/.my.cnf
+    tags: mysql
+    file:
+      path: /root/.my.cnf
+      state: absent
 
 
 # Play to install composer
@@ -315,7 +313,6 @@
       path: /usr/local/bin/composer
       mode: a+x
       state: file
-
 
 
 # Play to set app root directory and clone repo
@@ -392,20 +389,28 @@
     - vars/default.yml
   tasks:
 
-  - name: Download and install all libs and dependencies outlined in app
+  - name: composer install app
     tags: laravel
-    composer:
-      command: create-project
-      working_dir: /var/www/html/{{ vhost_name }}
-      optimize_autoloader: no
+    command: composer install
     become: yes
     become_user: "{{ created_username }}"
+    args:
+      chdir: /var/www/html/{{ vhost_name }}
+ 
 
+#migrating and seeding the database created. 
   - name: Run artisan migrate for the database
     tags: laravel
-    shell: php /var/www/html/{{ vhost_name }}/artisan migrate --force
+    shell: php /var/www/html/{{ vhost_name }}/artisan migrate --seed
     become_user: "{{ created_username }}"
     become: yes 
+#  - name: Generate app key
+#    tags: laravel
+#    command: php /var/www/html/{{ vhost_name }}/artisan key:generate
+
+#  - name: Set up app storage link
+#    tags: laravel
+#    command: php /var/www/html/{{ vhost_name }}/artisan storage:link
 
   - name: set ownership of app to www-data:www-data
     tags: laravel
@@ -424,8 +429,6 @@
       mode: u=rwX,g=rX,o=rX
       recurse: yes
     become: true
-
-
       
 
 # Play to set Apache's config file and virtual hosting of app
